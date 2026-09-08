@@ -2267,6 +2267,23 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_DIO"));
     add_opt(common_arg(
+        {"--moe-sidecar"}, "PATH",
+        "expert-major routed MoE sidecar directory or manifest",
+        [](common_params & params, const std::string & value) {
+            params.moe_sidecar = value;
+        }
+    ).set_env("LLAMA_ARG_MOE_SIDECAR"));
+    add_opt(common_arg(
+        {"--moe-slot-bank"}, "N",
+        "number of resident routed expert slots per layer",
+        [](common_params & params, int value) {
+            if (value <= 0) {
+                throw std::invalid_argument("moe-slot-bank must be positive");
+            }
+            params.moe_slot_bank = value;
+        }
+    ).set_env("LLAMA_ARG_MOE_SLOT_BANK"));
+    add_opt(common_arg(
         {"--numa"}, "TYPE",
         "attempt optimizations that help on some NUMA systems\n"
         "- distribute: spread execution evenly over all nodes\n"

@@ -3870,6 +3870,92 @@ std::atomic<bool> llm_thread_running(true);
 std::atomic<bool> tts_thread_running(true);
 std::atomic<bool> t2w_thread_running(true);
 
+struct OmniMoeTrace {
+    enum Phase {
+        PHASE_IDLE = 0,
+        PHASE_PREFILL,
+        PHASE_DECODE,
+    };
+
+    explicit OmniMoeTrace(const char * path) : fp(std::fopen(path, "w")) {
+        if (fp) {
+            std::fprintf(fp, "{\"type\":\"omni_moe_trace\",\"version\":1,\"timing_valid\":false}\n");
+            std::fflush(fp);
+        }
+    }
+
+    ~OmniMoeTrace() {
+        if (fp) {
+            std::fclose(fp);
+        }
+    }
+
+    bool valid() const {
+        return fp != nullptr;
+    }
+
+    void set_phase(Phase new_phase, int64_t new_frame) {
+        frame.store(new_frame, std::memory_order_relaxed);
+        phase.store(new_phase, std::memory_order_release);
+    }
+
+    FILE * fp = nullptr;
+    std::mutex write_mutex;
+    std::atomic<int> phase{PHASE_IDLE};
+    std::atomic<int64_t> frame{-1};
+    std::atomic<uint64_t> call{0};
+};
+
+omni_context::~omni_context() {
+    delete moe_trace;
+}
+
+static bool omni_moe_trace_cb_eval(ggml_tensor * tensor, bool ask, void * user_data) {
+    const char * name = ggml_get_name(tensor);
+    if (std::strncmp(name, "ffn_moe_topk-", 13) != 0) {
+        return false;
+    }
+    if (ask) {
+        return true;
+    }
+
+    auto * trace = static_cast<OmniMoeTrace *>(user_data);
+    if (!trace || !trace->valid() || tensor->type != GGML_TYPE_I32) {
+        return true;
+    }
+
+    int layer = -1;
+    if (std::sscanf(name, "ffn_moe_topk-%d", &layer) != 1) {
+        return true;
+    }
+
+    const size_t n_ids = ggml_nelements(tensor);
+    std::vector<int32_t> experts(n_ids);
+    ggml_backend_tensor_get(tensor, experts.data(), 0, n_ids * sizeof(int32_t));
+
+    const int phase = trace->phase.load(std::memory_order_acquire);
+    const char * phase_name = phase == OmniMoeTrace::PHASE_PREFILL ? "prefill" :
+                             phase == OmniMoeTrace::PHASE_DECODE  ? "decode"  : "idle";
+    const uint64_t call = trace->call.fetch_add(1, std::memory_order_relaxed);
+
+    std::lock_guard<std::mutex> lock(trace->write_mutex);
+    std::fprintf(trace->fp,
+                 "{\"type\":\"route\",\"call\":%llu,\"phase\":\"%s\",\"frame\":%lld,"
+                 "\"layer\":%d,\"k\":%lld,\"tokens\":%lld,\"experts\":[",
+                 (unsigned long long) call,
+                 phase_name,
+                 (long long) trace->frame.load(std::memory_order_relaxed),
+                 layer,
+                 (long long) tensor->ne[0],
+                 (long long) tensor->ne[1]);
+    for (size_t i = 0; i < experts.size(); ++i) {
+        std::fprintf(trace->fp, "%s%d", i == 0 ? "" : ",", experts[i]);
+    }
+    std::fprintf(trace->fp, "]}\n");
+    std::fflush(trace->fp);
+    return true;
+}
+
 // ============================================================================
 // ===== DUPLEX PIPELINE - 前置声明与结构体定义 ===============================
 // 完整实现位于本文件后段 "===== DUPLEX PIPELINE (Stage 1) ====" 区域。
@@ -3998,6 +4084,9 @@ static struct llama_model * llama_init_tts(common_params * params, std::string m
     
     llama_model_params model_params = common_model_params_to_llama(*params);
     model_params.partial_load = true;  // TTS GGUF contains extra tensors (emb_code, head_code, projector_*) beyond standard llama
+    model_params.moe_sidecar_path = nullptr;
+    model_params.moe_slot_bank = 0;
+    model_params.use_mmap = params->use_mmap;
 
     // 如果指定了override值(>=0)，使用它；否则保持与LLM相同的设置
     if (n_gpu_layers_override >= 0) {
@@ -4115,6 +4204,20 @@ struct omni_context * omni_init(struct common_params * params, int media_type, b
         }
         llama_context_params ctx_params = common_context_params_to_llama(*params);
         ctx_params.n_ctx                = params->n_ctx;
+
+        const char * moe_trace_path = std::getenv("OMNI_MOE_TRACE");
+        if (moe_trace_path && moe_trace_path[0] != '\0') {
+            ctx_omni->moe_trace = new OmniMoeTrace(moe_trace_path);
+            if (!ctx_omni->moe_trace->valid()) {
+                LOG_ERR("failed to open OMNI_MOE_TRACE output: %s\n", moe_trace_path);
+                delete ctx_omni->moe_trace;
+                ctx_omni->moe_trace = nullptr;
+            } else {
+                ctx_params.cb_eval = omni_moe_trace_cb_eval;
+                ctx_params.cb_eval_user_data = ctx_omni->moe_trace;
+                LOG_INF("MoE route trace enabled: %s\n", moe_trace_path);
+            }
+        }
         
         ctx_llama = llama_new_context_with_model(model, ctx_params);
         if (ctx_llama == NULL) {
@@ -10171,6 +10274,9 @@ static void duplex_llm_thread_func(omni_context * ctx_omni, common_params * para
 
             if (packet) {
                 // Stage 3: 先试 fused（1 次 llama_decode），失败回退到老 5-7 段路径。
+                if (ctx_omni->moe_trace) {
+                    ctx_omni->moe_trace->set_phase(OmniMoeTrace::PHASE_PREFILL, packet->index);
+                }
                 if (!duplex_do_prefill_one_fused(ctx_omni, params, packet, hidden_size)) {
                     duplex_do_prefill_one(ctx_omni, params, packet, hidden_size);
                 }
@@ -10182,11 +10288,17 @@ static void duplex_llm_thread_func(omni_context * ctx_omni, common_params * para
 
         // ---- Phase 2: decode ----
         if (!ctx_omni->break_event.load()) {
+            if (ctx_omni->moe_trace) {
+                ctx_omni->moe_trace->set_phase(OmniMoeTrace::PHASE_DECODE, decode_req->round_idx);
+            }
             bool ok = duplex_do_decode(ctx_omni, params,
                                        decode_req->debug_dir, decode_req->round_idx);
             decode_req->ok.store(ok);
         } else {
             decode_req->ok.store(false);
+        }
+        if (ctx_omni->moe_trace) {
+            ctx_omni->moe_trace->set_phase(OmniMoeTrace::PHASE_IDLE, -1);
         }
         decode_req->done.store(true);
         dup->decode_done_cv.notify_all();

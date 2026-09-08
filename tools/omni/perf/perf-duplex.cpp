@@ -347,6 +347,8 @@ static void show_usage(const char * prog_name) {
         "  --ref-audio <path>  参考音频路径\n"
         "  -c, --ctx-size <n>  上下文大小 (默认: 4096)\n"
         "  -ngl <n>            GPU 层数 (默认: 99)\n"
+        "  --moe-sidecar <path>  expert-major sidecar 目录或 manifest\n"
+        "  --moe-slot-bank <n>   每层 routed expert slot 数量\n"
         "  --no-tts            禁用 TTS\n"
         "  --omni              启用 omni 模式 (audio+vision)；默认已开\n"
         "  --vision-backend <m>  'metal'(默认) 或 'coreml'(ANE)\n"
@@ -375,8 +377,10 @@ int main(int argc, char ** argv) {
     std::string out_json;
     std::string vision_backend = "metal";
     std::string vision_coreml_model_path;
+    std::string moe_sidecar;
     int n_ctx = 4096;
     int n_gpu_layers = 99;
+    int moe_slot_bank = 0;
     int media_type = 2;     // 1=audio only, 2=omni；默认 omni（硬编码样本含图像）
     bool use_tts = true;
     bool run_test = false;
@@ -399,6 +403,8 @@ int main(int argc, char ** argv) {
         else if (arg == "--ref-audio" && i + 1 < argc) { ref_audio_path = argv[++i]; }
         else if ((arg == "-c" || arg == "--ctx-size") && i + 1 < argc) { n_ctx = std::atoi(argv[++i]); }
         else if (arg == "-ngl" && i + 1 < argc) { n_gpu_layers = std::atoi(argv[++i]); }
+        else if (arg == "--moe-sidecar" && i + 1 < argc) { moe_sidecar = argv[++i]; }
+        else if (arg == "--moe-slot-bank" && i + 1 < argc) { moe_slot_bank = std::atoi(argv[++i]); }
         else if (arg == "--no-tts") { use_tts = false; }
         else if (arg == "--omni") { media_type = 2; }
         else if (arg == "--vision-backend" && i + 1 < argc) {
@@ -432,6 +438,10 @@ int main(int argc, char ** argv) {
     if (llm_path.empty()) {
         fprintf(stderr, "Error: -m <llm_model_path> is required\n\n");
         show_usage(argv[0]);
+        return 1;
+    }
+    if (moe_sidecar.empty() != (moe_slot_bank == 0) || moe_slot_bank < 0) {
+        fprintf(stderr, "Error: --moe-sidecar and positive --moe-slot-bank must be set together\n");
         return 1;
     }
 
@@ -473,6 +483,8 @@ int main(int argc, char ** argv) {
     params.tts_model    = paths.tts;
     params.n_ctx        = n_ctx;
     params.n_gpu_layers = n_gpu_layers;
+    params.moe_sidecar  = moe_sidecar;
+    params.moe_slot_bank = moe_slot_bank;
     if (vision_backend == "coreml") {
         params.vision_coreml_model_path = paths.vision_coreml;
     }

@@ -5,6 +5,7 @@
 #include "llama-hparams.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
+#include "llama-moe-sidecar.h"
 #include "llama-cparams.h"
 #include "llama-model-loader.h"
 
@@ -962,10 +963,23 @@ struct llama_model::impl {
     std::vector<layer_dev> dev_layer;
 
     bool has_tensor_overrides;
+    std::unique_ptr<llama_moe_sidecar> moe_sidecar;
 };
 
 llama_model::llama_model(const llama_model_params & params) : params(params), pimpl(std::make_unique<impl>()) {
     pimpl->has_tensor_overrides = params.tensor_buft_overrides && params.tensor_buft_overrides[0].pattern;
+
+    const bool has_sidecar = params.moe_sidecar_path && params.moe_sidecar_path[0] != '\0';
+    const bool has_slots = params.moe_slot_bank > 0;
+    if (has_sidecar != has_slots) {
+        throw std::invalid_argument("MoE sidecar path and slot bank size must be set together");
+    }
+    if (has_sidecar) {
+        if (params.use_mmap) {
+            throw std::invalid_argument("MoE slot bank requires use_mmap=false");
+        }
+        pimpl->moe_sidecar = std::make_unique<llama_moe_sidecar>(params.moe_sidecar_path);
+    }
 }
 
 llama_model::~llama_model() {
@@ -1146,6 +1160,25 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
 
     // per-arch hparams
     load_arch_hparams(ml);
+
+    if (pimpl->moe_sidecar) {
+        if (arch != LLM_ARCH_QWEN35MOE) {
+            throw std::runtime_error("MoE sidecar currently supports only qwen35moe");
+        }
+        if (pimpl->moe_sidecar->expert_count() != (int32_t) hparams.n_expert ||
+            pimpl->moe_sidecar->expert_used_count() != (int32_t) hparams.n_expert_used) {
+            throw std::runtime_error("MoE sidecar expert counts do not match model metadata");
+        }
+        if (params.moe_slot_bank < (int32_t) hparams.n_expert_used ||
+            params.moe_slot_bank > (int32_t) hparams.n_expert) {
+            throw std::runtime_error("MoE slot bank must be between expert_used_count and expert_count");
+        }
+        LLAMA_LOG_INFO("%s: MoE sidecar enabled with %d slots/layer, %d layers, %.2f MiB/slot across layers\n",
+            __func__,
+            params.moe_slot_bank,
+            pimpl->moe_sidecar->layer_count(),
+            pimpl->moe_sidecar->bytes_per_slot_all_layers() / 1024.0 / 1024.0);
+    }
 
     pimpl->n_bytes = ml.n_bytes;
 
@@ -1917,6 +1950,18 @@ const ggml_tensor * llama_model::get_tensor(const char * name) const {
     return it->second;
 }
 
+bool llama_model::moe_slot_bank_enabled() const {
+    return pimpl->moe_sidecar != nullptr;
+}
+
+int32_t llama_model::moe_slot_bank_size() const {
+    return pimpl->moe_sidecar ? params.moe_slot_bank : 0;
+}
+
+const llama_moe_sidecar_entry * llama_model::moe_sidecar_entry(const char * tensor_name) const {
+    return pimpl->moe_sidecar ? pimpl->moe_sidecar->find(tensor_name) : nullptr;
+}
+
 float llama_model::get_rope_freq_base (const llama_cparams & cparams, int il) const {
     return hparams.is_swa(il) ? hparams.rope_freq_base_train_swa : cparams.rope_freq_base;
 }
@@ -2163,6 +2208,8 @@ llama_model_params llama_model_default_params() {
         /*.progress_callback           =*/ nullptr,
         /*.progress_callback_user_data =*/ nullptr,
         /*.kv_overrides                =*/ nullptr,
+        /*.moe_sidecar_path            =*/ nullptr,
+        /*.moe_slot_bank               =*/ 0,
         /*.vocab_only                  =*/ false,
         /*.use_mmap                    =*/ true,
         /*.use_direct_io               =*/ false,

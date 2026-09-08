@@ -20,6 +20,7 @@ struct llama_cparams;
 struct llama_layer;
 
 struct llama_memory_context_i;
+class llama_moe_slot_runtime;
 
 class llama_kv_cache_context;
 class llama_kv_cache_dsa_context;
@@ -600,6 +601,7 @@ struct llm_graph_params {
     const llama_adapter_cvec     * cvec;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
+    llama_moe_slot_runtime       * moe_slots;
     const llama_cross            * cross;
 
     std::map<llama_seq_id, llama_sampler *> samplers;
@@ -688,6 +690,7 @@ struct llm_graph_params {
             gtype == other.gtype &&
             cvec  == other.cvec  &&
             loras == other.loras &&
+            moe_slots == other.moe_slots &&
             cross == other.cross;
     }
 };
@@ -817,6 +820,7 @@ struct llm_graph_context {
     const llama_adapter_cvec     * cvec;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
+    llama_moe_slot_runtime       * moe_slots;
     const llama_cross            * cross;
 
     std::map<llama_seq_id, llama_sampler *> samplers;

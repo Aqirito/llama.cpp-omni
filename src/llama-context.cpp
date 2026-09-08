@@ -8,6 +8,7 @@
 #include "llama-io.h"
 #include "llama-memory.h"
 #include "llama-mmap.h"
+#include "llama-moe-slot.h"
 #include "llama-model.h"
 #include "llama-ext.h"
 #include "llama.h"
@@ -34,6 +35,7 @@ llama_context::llama_context(
         const llama_model & model,
               llama_context_params params) :
     model(model),
+    moe_slots(model.moe_slot_bank_enabled() ? std::make_unique<llama_moe_slot_runtime>(model) : nullptr),
     cvec(std::make_unique<llama_adapter_cvec>()),
     loras(std::make_unique<llama_adapter_loras>()),
     balloc(std::make_unique<llama_batch_allocr>(model.hparams.n_pos_per_embd())) {
@@ -2296,6 +2298,7 @@ llm_graph_params llama_context::graph_params(
         /*.cvec        =*/ cvec.get(),
         /*.loras       =*/ loras.get(),
         /*.mctx        =*/ mctx,
+        /*.moe_slots   =*/ moe_slots.get(),
         /*.cross       =*/ &cross,
         /*.samplers    =*/ sampling.samplers,
         /*.n_outputs   =*/ n_outputs,

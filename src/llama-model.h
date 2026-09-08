@@ -17,6 +17,7 @@
 struct llama_cparams;
 struct llama_ubatch;
 struct llama_model_loader;
+struct llama_moe_sidecar_entry;
 
 // available models
 enum llm_type {
@@ -618,6 +619,10 @@ struct llama_model {
     bool has_tensor_overrides() const;
 
     const struct ggml_tensor * get_tensor(const char * name) const;
+
+    bool moe_slot_bank_enabled() const;
+    int32_t moe_slot_bank_size() const;
+    const llama_moe_sidecar_entry * moe_sidecar_entry(const char * tensor_name) const;
 
     float get_rope_freq_base (const llama_cparams & cparams, int il) const;
     float get_rope_freq_scale(const llama_cparams & cparams, int il) const;

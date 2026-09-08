@@ -33,6 +33,7 @@ class Token2WavSession;
 // 定义在 omni.cpp 的 "===== DUPLEX PIPELINE (Stage 1) =====" 区域，
 // omni_context 只持有指针，simplex 路径不受影响。
 struct DuplexPipeline;
+struct OmniMoeTrace;
 
 // 定义在 omni.cpp 的 "===== DUPLEX SESSION (high-level) =====" 区域。
 // 封装了 prefill_worker / decode_worker 两条调度线程，
@@ -159,6 +160,8 @@ struct projector_model {
 using audio_output_cb_t = std::function<void(const float * samples, int n_samples, int sample_rate, bool is_final)>;
 
 struct omni_context {
+    ~omni_context();
+
     struct vision_ctx * ctx_vision = NULL;
     struct audition_ctx * ctx_audio = NULL;
     
@@ -252,6 +255,7 @@ struct omni_context {
     // 生命周期：omni_free 中通过 duplex_pipeline_free 销毁。
     // 非 duplex_mode 下始终为 nullptr。
     DuplexPipeline * duplex = NULL;
+    OmniMoeTrace * moe_trace = NULL;
 
     // 高层 duplex 会话句柄；由 omni_duplex_session_begin 分配，session_end 销毁。
     // 持有内部 prefill_worker/decode_worker 线程及 frame 队列。

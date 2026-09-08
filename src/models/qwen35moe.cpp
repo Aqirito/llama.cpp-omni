@@ -1,5 +1,6 @@
 #include "models.h"
 #include "llama-memory-recurrent.h"
+#include "llama-moe-sidecar.h"
 
 void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp, false);
@@ -40,6 +41,55 @@ void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
 
 void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
     LLAMA_LOAD_LOCALS;
+
+    auto create_routed_tensor = [&](const LLM_TN_IMPL & tensor_name,
+                                    const std::initializer_list<int64_t> & dims,
+                                    int flags) {
+        ggml_tensor * tensor = create_tensor(tensor_name, dims, flags);
+        if (!moe_slot_bank_enabled()) {
+            return tensor;
+        }
+
+        const auto * entry = moe_sidecar_entry(tensor_name.str().c_str());
+        if (!tensor) {
+            if (entry) {
+                throw std::runtime_error(format(
+                    "MoE sidecar contains tensor '%s' missing from GGUF metadata",
+                    tensor_name.str().c_str()));
+            }
+            return tensor;
+        }
+        if (!entry) {
+            throw std::runtime_error(format(
+                "MoE sidecar is missing routed tensor '%s'",
+                tensor_name.str().c_str()));
+        }
+
+        ml.virtualize_expert_tensor(
+            tensor,
+            n_expert,
+            moe_slot_bank_size(),
+            entry->type,
+            entry->bytes_per_expert);
+        return tensor;
+    };
+
+    auto create_routed_gate_up = [&](llama_layer & layer, int il, int64_t n_ff_exp, int flags) {
+        layer.ffn_gate_up_exps = create_routed_tensor(
+            tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", il),
+            { n_embd, n_ff_exp * 2, n_expert },
+            TENSOR_NOT_REQUIRED | flags);
+        if (!layer.ffn_gate_up_exps) {
+            layer.ffn_gate_exps = create_routed_tensor(
+                tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", il),
+                { n_embd, n_ff_exp, n_expert },
+                flags);
+            layer.ffn_up_exps = create_routed_tensor(
+                tn(LLM_TENSOR_FFN_UP_EXPS, "weight", il),
+                { n_embd, n_ff_exp, n_expert },
+                flags);
+        }
+    };
 
     const uint32_t n_main = n_layer - hparams.nextn_predict_layers;
     const bool mtp_only   = (hparams.nextn_predict_layers > 0) &&
@@ -99,8 +149,8 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
 
         // Routed experts
         layer.ffn_gate_inp  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", il), { n_embd, n_expert }, flags);
-        layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il), { n_ff_exp, n_embd, n_expert }, flags);
-        create_tensor_gate_up_exps(layer, il, n_embd, n_ff_exp, n_expert, flags);
+        layer.ffn_down_exps = create_routed_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il), { n_ff_exp, n_embd, n_expert }, flags);
+        create_routed_gate_up(layer, il, n_ff_exp, flags);
 
         // Shared experts
         layer.ffn_gate_inp_shexp = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", il), { n_embd }, flags);
@@ -126,8 +176,8 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
 
         // Routed experts
         layer.ffn_gate_inp  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", il), { n_embd, n_expert }, 0);
-        layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il), { n_ff_exp, n_embd, n_expert }, 0);
-        create_tensor_gate_up_exps(layer, il, n_embd, n_ff_exp, n_expert, 0);
+        layer.ffn_down_exps = create_routed_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il), { n_ff_exp, n_embd, n_expert }, 0);
+        create_routed_gate_up(layer, il, n_ff_exp, 0);
 
         // Shared experts
         layer.ffn_gate_inp_shexp = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", il), { n_embd }, 0);

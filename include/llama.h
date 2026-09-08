@@ -315,6 +315,11 @@ extern "C" {
         // override key-value pairs of the model meta data
         const struct llama_model_kv_override * kv_overrides;
 
+        // Expert-major sidecar manifest and slots per routed layer.
+        // Both fields must be set together.
+        const char * moe_sidecar_path;
+        int32_t moe_slot_bank;
+
         // Keep the booleans together to avoid misalignment during copy-by-value.
         bool vocab_only;      // only load the vocabulary, no weights
         bool use_mmap;        // use mmap if possible

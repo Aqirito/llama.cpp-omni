@@ -1285,6 +1285,46 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     return tensor;
 }
 
+void llama_model_loader::virtualize_expert_tensor(
+        ggml_tensor * tensor,
+        int64_t n_expert,
+        int64_t n_slots,
+        ggml_type sidecar_type,
+        size_t bytes_per_expert) {
+    if (!tensor) {
+        return;
+    }
+    if (tensor->data || tensor->buffer) {
+        throw std::runtime_error("cannot virtualize an allocated expert tensor");
+    }
+    if (tensor->type != sidecar_type) {
+        throw std::runtime_error(format(
+            "expert tensor '%s' type %s does not match sidecar type %s",
+            ggml_get_name(tensor), ggml_type_name(tensor->type), ggml_type_name(sidecar_type)));
+    }
+    if (tensor->ne[2] != n_expert || n_slots <= 0 || n_slots > n_expert) {
+        throw std::runtime_error(format("invalid slot geometry for expert tensor '%s'", ggml_get_name(tensor)));
+    }
+    if (ggml_nbytes(tensor) != bytes_per_expert * (size_t) n_expert) {
+        throw std::runtime_error(format("expert byte stride mismatch for tensor '%s'", ggml_get_name(tensor)));
+    }
+
+    const std::string name = ggml_get_name(tensor);
+    tensor->ne[2] = n_slots;
+    tensor->nb[3] = tensor->nb[2] * tensor->ne[2];
+
+    if (ggml_nbytes(tensor) != bytes_per_expert * (size_t) n_slots) {
+        throw std::runtime_error(format("virtual expert tensor '%s' has unexpected size", name.c_str()));
+    }
+    if (weights_map.erase(name) != 1) {
+        throw std::runtime_error(format("expert tensor '%s' is missing from GGUF weights", name.c_str()));
+    }
+
+    LLAMA_LOG_INFO("%s: virtualized %s from %lld experts to %lld slots (%.2f MiB)\n",
+        __func__, name.c_str(), (long long) n_expert, (long long) n_slots,
+        ggml_nbytes(tensor) / 1024.0 / 1024.0);
+}
+
 struct ggml_tensor * llama_model_loader::create_tensor_as_view(struct ggml_context * ctx, struct ggml_tensor * base, const std::string & name, const std::initializer_list<int64_t> & ne, size_t offset, bool required) {
     const struct ggml_tensor * cur = check_tensor_dims(name, ne, required);
 

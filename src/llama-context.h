@@ -14,6 +14,7 @@
 #include <vector>
 
 struct llama_model;
+class llama_moe_slot_runtime;
 class llama_batch_allocr;
 
 class llama_io_read_i;
@@ -265,6 +266,7 @@ private:
     //
 
     const llama_model & model;
+    std::unique_ptr<llama_moe_slot_runtime> moe_slots;
 
     llama_cparams cparams;
 
