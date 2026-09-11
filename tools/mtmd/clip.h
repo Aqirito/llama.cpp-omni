@@ -39,6 +39,7 @@ struct clip_context_params {
     enum clip_flash_attn_type flash_attn_type;
     int image_min_tokens;
     int image_max_tokens;
+    int image_max_slice_nums;
     bool warmup;
     ggml_backend_sched_eval_callback cb_eval;
     void * cb_eval_user_data;
@@ -116,6 +117,8 @@ void clip_image_f32_batch_add_mel(struct clip_image_f32_batch * batch, int n_mel
 
 bool clip_has_vision_encoder(const struct clip_ctx * ctx);
 bool clip_has_audio_encoder(const struct clip_ctx * ctx);
+
+void clip_set_image_max_slice_nums(struct clip_ctx * ctx, int n);
 
 std::map<ggml_backend_dev_t, size_t> clip_get_mem_usage(const struct clip_ctx * ctx);
 

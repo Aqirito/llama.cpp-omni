@@ -203,6 +203,9 @@ struct clip_ctx {
         if (ctx_params.image_max_tokens > 0) {
             model.hparams.custom_image_max_tokens = ctx_params.image_max_tokens;
         }
+        if (ctx_params.image_max_slice_nums > 0) {
+            model.hparams.custom_image_max_slice_nums = ctx_params.image_max_slice_nums;
+        }
 
         backend_ptrs.push_back(backend_cpu);
         backend_buft.push_back(ggml_backend_get_default_buffer_type(backend_cpu));
@@ -4280,6 +4283,10 @@ bool clip_has_vision_encoder(const struct clip_ctx * ctx) {
 
 bool clip_has_audio_encoder(const struct clip_ctx * ctx) {
     return ctx->model.modality == CLIP_MODALITY_AUDIO;
+}
+
+void clip_set_image_max_slice_nums(struct clip_ctx * ctx, int n) {
+    ctx->model.hparams.custom_image_max_slice_nums = n;
 }
 
 bool clip_encode_float_image (struct clip_ctx * ctx, int n_threads, float * img, int h, int w, float * vec) {

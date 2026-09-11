@@ -93,6 +93,7 @@ struct mtmd_context_params {
     // limit number of image tokens, only for vision models with dynamic resolution
     int image_min_tokens; // minimum number of tokens for image input (default: read from metadata)
     int image_max_tokens; // maximum number of tokens for image input (default: read from metadata)
+    int image_max_slice_nums; // max MiniCPM-V slices; -1 = model default (9), 1 = overview only
 
     // callback function passed over to mtmd proper
     ggml_backend_sched_eval_callback cb_eval;
@@ -110,6 +111,9 @@ MTMD_API mtmd_context * mtmd_init_from_file(const char * mmproj_fname,
                                             const struct mtmd_context_params ctx_params);
 
 MTMD_API void mtmd_free(mtmd_context * ctx);
+
+// live-update MiniCPM-V slice cap; next image encode picks it up. 1 = overview only
+MTMD_API void mtmd_set_image_max_slice_nums(mtmd_context * ctx, int n);
 
 // whether we need to set non-causal mask before llama_decode
 // if chunk is nullptr, we assume the default case where chunk is an image chunk
