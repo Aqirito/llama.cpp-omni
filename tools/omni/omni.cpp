@@ -4256,19 +4256,18 @@ struct omni_context * omni_init(struct common_params * params, int media_type, b
         ctx_omni->ctx_vision = ctx_vision;
     } else if (media_type == 2 && disable_vision) {
         LOG_INF("init vision.... SKIPPED (OMNI_DISABLE_VISION=1, voice-only mode, ~1.1GB VRAM saved)");
-    }
-
+    } else if (media_type == 2) {
         // 🔧 [batch encode 开关] 由 common_params 控制（默认关闭）
-        if (ctx_vision) {
-            vision_set_batch_encode(ctx_vision, ctx_omni->params->vpm_batch_encode);
+        if (ctx_omni->ctx_vision) {
+            vision_set_batch_encode(ctx_omni->ctx_vision, ctx_omni->params->vpm_batch_encode);
         }
 
         // Set CoreML model path if available (for vision ANE acceleration)
-        // Note: .mlmodelc is a directory, not a file, so use stat instead of ifstream
-        if (ctx_vision && !ctx_omni->params->vision_coreml_model_path.empty()) {
+        auto * ctx_vision_ = ctx_omni->ctx_vision;
+        if (ctx_vision_ && !ctx_omni->params->vision_coreml_model_path.empty()) {
             struct stat coreml_stat;
             if (stat(ctx_omni->params->vision_coreml_model_path.c_str(), &coreml_stat) == 0) {
-                vision_set_coreml_model_path(ctx_vision, ctx_omni->params->vision_coreml_model_path.c_str());
+                vision_set_coreml_model_path(ctx_vision_, ctx_omni->params->vision_coreml_model_path.c_str());
                 LOG_INF("Vision CoreML model path set to: %s\n", ctx_omni->params->vision_coreml_model_path.c_str());
             } else {
                 LOG_WRN("Vision CoreML model path does not exist: %s, skipping ANE\n", ctx_omni->params->vision_coreml_model_path.c_str());
