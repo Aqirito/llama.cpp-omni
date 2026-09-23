@@ -4243,11 +4243,20 @@ struct omni_context * omni_init(struct common_params * params, int media_type, b
 
     ctx_omni->n_past = 0;
     
-    if (media_type == 2) {
+    // [fork patch] OMNI_DISABLE_VISION=1 skips the SigLIP2 vision encoder (~1.1 GB
+    // VRAM) for voice-only deployments. Safe: the duplex encoder loop guards all
+    // vision work on ctx_vision != nullptr (has_img), so a voice-only session
+    // never dereferences the missing encoder. Vision tokenizer/streaming paths
+    // also guard on ctx_vision (line ~10512). Absence of the env var = unchanged.
+    static const bool disable_vision = (std::getenv("OMNI_DISABLE_VISION") != nullptr && std::getenv("OMNI_DISABLE_VISION")[0] != '0');
+    if (media_type == 2 && !disable_vision) {
         LOG_INF("init vision....");
         const char * vision_path = ctx_omni->params->vpm_model.c_str();
         auto * ctx_vision = vision_init(vision_path, vision_context_params{true, GGML_LOG_LEVEL_INFO, nullptr});
         ctx_omni->ctx_vision = ctx_vision;
+    } else if (media_type == 2 && disable_vision) {
+        LOG_INF("init vision.... SKIPPED (OMNI_DISABLE_VISION=1, voice-only mode, ~1.1GB VRAM saved)");
+    }
 
         // 🔧 [batch encode 开关] 由 common_params 控制（默认关闭）
         if (ctx_vision) {
