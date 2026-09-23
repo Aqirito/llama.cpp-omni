@@ -525,6 +525,15 @@ static omni_context * create_session_octx(common_params & params, const ParsedSe
     bool duplex_mode = (init.mode == "full_duplex");
     bool use_tts = init.use_tts;
 
+    // [fork patch] OMNI_T2W_DEVICE env override for the Token2Wav device
+    // (gpu | gpu:N | cpu). Default stays "gpu:0" (unchanged behavior).
+    // Useful: OMNI_T2W_DEVICE=cpu to benchmark T2W on CPU / free VRAM.
+    std::string token2wav_device = "gpu:0";
+    if (const char * env_t2w = std::getenv("OMNI_T2W_DEVICE"); env_t2w && env_t2w[0]) {
+        token2wav_device = env_t2w;
+        LOG_INF("create_session_octx: token2wav_device overridden by OMNI_T2W_DEVICE=%s\n", token2wav_device.c_str());
+    }
+
     // Build params for omni_init
     auto & p = params;
     p.n_predict = 2048;
@@ -546,7 +555,7 @@ static omni_context * create_session_octx(common_params & params, const ParsedSe
     }
 
     omni_context * octx = omni_init(&p, media_type, use_tts, p.tts_bin_dir, /*tts_gpu_layers*/99,
-                                     /*token2wav_device*/"gpu:0", duplex_mode,
+                                     /*token2wav_device*/token2wav_device.c_str(), duplex_mode,
                                      model, ctx, output_dir);
     if (!octx) {
         LOG_ERR("create_session_octx: omni_init failed\n");
